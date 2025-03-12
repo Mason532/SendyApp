@@ -24,9 +24,10 @@ class MainActivity : MasterActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        installSplashScreen()
-
         api = API.getInsatce(SERVER_URL, "sendy")
+        viewModel.getTermOfUse(this, api)
+
+        installSplashScreen()
 
         setContent {
             SendyTestAppTheme {
@@ -46,14 +47,14 @@ object AppNavigationDestinations {
 fun AppNavigation(vm: MainViewModel, api: API) {
     val navController = rememberNavController()
     val appContext = LocalContext.current.applicationContext
+    val activityContext = LocalContext.current
 
     NavHost(
         navController = navController,
         startDestination = AppNavigationDestinations.loginScreen
     ) {
-        composable(AppNavigationDestinations.loginScreen) {
+        composable(route = AppNavigationDestinations.loginScreen) {
             LoginScreen(
-                navController = navController,
                 loginScreenState = vm.loginScreenState,
                 onContinueClicked = { phoneNumber ->
                     vm.sendCode(
@@ -61,14 +62,22 @@ fun AppNavigation(vm: MainViewModel, api: API) {
                         phoneNumber = phoneNumber,
                         context = appContext
                     )
+                },
+                onCodeSent = {phone ->
+                    navController.navigate("${AppNavigationDestinations.otpScreen}/${phone}")
+                },
+                onTermOfUseShow = {
+                    vm.showTermOfUse(context = activityContext)
                 }
             )
         }
 
-        composable(AppNavigationDestinations.otpScreen) {
+        composable(route = "${AppNavigationDestinations.otpScreen}/{phone}") {
+            val phone = it.arguments?.getString("phone") ?: ""
             Otp(
                 navController = navController,
                 otpScreenState = vm.otpScreenState,
+                phone = phone,
                 onContinueClicked = {otp->
                     vm.checkOtp(
                         context = appContext,
@@ -79,9 +88,10 @@ fun AppNavigation(vm: MainViewModel, api: API) {
             )
         }
 
-        composable(AppNavigationDestinations.finalScreen) {
+        composable(route = AppNavigationDestinations.finalScreen) {
             FinalScreen()
         }
 
     }
 }
+

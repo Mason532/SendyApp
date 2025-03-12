@@ -1,6 +1,8 @@
 package com.mason.sendytestapp
 
 import android.widget.Toast
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -8,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
@@ -26,11 +29,18 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreInterceptKeyBeforeSoftKeyboard
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.tooling.preview.Preview
@@ -38,28 +48,23 @@ import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import androidx.navigation.compose.rememberNavController
 
-@Preview(showBackground = true)
-@Composable
-fun OtpPreview() {
-    val state = remember {mutableStateOf(OtpScreenState())}
-    val cntrl = rememberNavController()
-    Otp(
-        Modifier, cntrl, state, {}
-    )
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalComposeUiApi::class)
 @Composable
 fun Otp(
     modifier: Modifier = Modifier,
     navController: NavController,
+    phone: String,
     otpScreenState: State<OtpScreenState>,
     onContinueClicked: (String) -> Unit
 ) {
+    val focusManager = LocalFocusManager.current
+    val keyboardController = LocalSoftwareKeyboardController.current
+    val interactionSource = remember { MutableInteractionSource() }
+    val isFocused by interactionSource.collectIsFocusedAsState()
+
     var otp by rememberSaveable { mutableStateOf("") }
-    var isValid by rememberSaveable { mutableStateOf(true) }
+    var isValid by rememberSaveable { mutableStateOf(false) }
     var isLoading by rememberSaveable { mutableStateOf(false) }
-    var isAgreementChecked by rememberSaveable { mutableStateOf(false) }
 
     val context = LocalContext.current
 
@@ -83,6 +88,8 @@ fun Otp(
         isLoading = false
     }
 
+    var otpState by remember { mutableStateOf(TextFieldValue(otp)) }
+
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -91,7 +98,7 @@ fun Otp(
         verticalArrangement = Arrangement.Center
     ) {
         Text(
-            text = "Введите код, отправленный на номер мобильного телефона",
+            text = "Введите код из 6 цифр, отправленный на номер $phone",
             style = MaterialTheme.typography.bodyLarge,
             modifier = modifier
                 .fillMaxWidth()
@@ -100,26 +107,40 @@ fun Otp(
         )
 
         OutlinedTextField(
-            value = otp,
+            value = otpState,
             onValueChange = { newValue ->
-                val newValueWithoutSpaces = newValue.replace(" ", "")
-                if (newValueWithoutSpaces != otp) {
-                    otp = newValueWithoutSpaces
+                if (newValue.text.length <= 6 && newValue.text.all { it.isDigit() }) {
+                    otpState = newValue
+                    otp = newValue.text
                     isValid = isValidOtp(otp)
                 }
             },
+            keyboardActions = KeyboardActions(
+                onDone = {
+                    focusManager.clearFocus()
+                    keyboardController?.hide()
+                }
+            ),
             label = { Text("Код") },
+            interactionSource = interactionSource,
             placeholder = { Text("******") },
-            isError = !isValid,
+            isError = !isValid && isFocused,
             keyboardOptions = KeyboardOptions(
-                keyboardType = KeyboardType.Phone
+                keyboardType = KeyboardType.Number
             ),
             singleLine = true,
             modifier = modifier
                 .fillMaxWidth()
-                .padding(bottom = 8.dp),
+                .padding(bottom = 8.dp)
+                .onPreInterceptKeyBeforeSoftKeyboard {
+                    if (it.key == Key.Back) {
+                        focusManager.clearFocus()
+                    }
+                    false
+                }
+            ,
             supportingText = {
-                if (!isValid) {
+                if (!isValid && isFocused) {
                     Text(
                         text = "Код должен состоять из 6 цифр",
                         color = MaterialTheme.colorScheme.error,
@@ -129,46 +150,15 @@ fun Otp(
             },
             colors = TextFieldDefaults.outlinedTextFieldColors(
                 focusedBorderColor = if (isValid) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
-                unfocusedBorderColor = if (isValid) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+                unfocusedBorderColor = if (isValid || !isFocused) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
                 focusedLabelColor = if (isValid) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
-                unfocusedLabelColor = if (isValid) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
+                unfocusedLabelColor = if (isValid || !isFocused) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
             )
         )
 
-        Row(
-            modifier = Modifier
-                .fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Checkbox(
-                checked = isAgreementChecked,
-                onCheckedChange = { isAgreementChecked = it }
-            )
-
-            val annotatedText = buildAnnotatedString {
-                val start = length
-                append("Я принимаю условия оферты")
-                val end = length
-
-                addStyle(
-                    style = SpanStyle(
-                        color = MaterialTheme.colorScheme.primary,
-                        textDecoration = TextDecoration.Underline
-                    ),
-                    start = start,
-                    end = end
-                )
-            }
-
-            Text(
-                text = annotatedText,
-            )
-        }
-
-
         Button(
             onClick = {
-                if (otp.isNotEmpty() && isValid && isAgreementChecked) {
+                if (isValid) {
                     isLoading = true
                     onContinueClicked(otp)
                 }
@@ -176,7 +166,7 @@ fun Otp(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(top = 8.dp),
-            enabled = isValid && isAgreementChecked && !isLoading
+            enabled = isValid && !isLoading
         ) {
             if (isLoading) {
                 CircularProgressIndicator(
