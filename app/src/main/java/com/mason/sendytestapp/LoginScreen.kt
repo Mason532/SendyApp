@@ -22,9 +22,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -49,6 +47,8 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
+import kotlinx.coroutines.flow.SharedFlow
 
 object PhoneNumberConst {
     const val RU_PHONE_CODE = "+7"
@@ -59,7 +59,7 @@ object PhoneNumberConst {
 @Composable
 fun LoginScreen(
     modifier: Modifier = Modifier,
-    loginScreenState: State<LoginScreenState>,
+    otpSendStatus: SharedFlow<OtpSendStatus>,
     onContinueClicked: (String) -> Unit,
     onCodeSent: (String) -> Unit,
     onTermOfUseShow: () -> Unit,
@@ -69,8 +69,8 @@ fun LoginScreen(
     val context = LocalContext.current
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
-    val lifecycleState = LocalLifecycleOwner.current.lifecycle.currentState
-    val navFlag = rememberSaveable { mutableStateOf(true) }
+
+    val lifecycleOwner = LocalLifecycleOwner.current
 
     val phoneCodeLength = remember {PhoneNumberConst.RU_PHONE_CODE.length}
     val phoneNumber = rememberSaveable { mutableStateOf(PhoneNumberConst.RU_PHONE_CODE) }
@@ -87,33 +87,27 @@ fun LoginScreen(
         return phoneNumberRegex.matches(phone)
     }
 
-    LaunchedEffect(loginScreenState.value) {
-        if (navFlag.value) {
-            val state = loginScreenState.value
+    LaunchedEffect(Unit) {
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            otpSendStatus.collect{
+                if (isLoading) {
+                    when {
+                        it.isSendSucceed -> onCodeSent(phoneNumber.value)
 
-            if (state.isSendSucceed) {
-                navFlag.value = false
-                onCodeSent(phoneNumber.value)
+                        it.sendingError != null -> {
+                            Toast.makeText(
+                                context,
+                                "Произошла ошибка.😞 Попробуйте ещё раз!",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        }
+                    }
+                    isLoading = false
+                }
             }
-
-            if (state.sendingError != null) {
-                Toast.makeText(context, "Произошла ошибка.😞 Попробуйте ещё раз!", Toast.LENGTH_SHORT).show()
-            }
-
-            isLoading = false
         }
-
-        if (lifecycleState == Lifecycle.State.STARTED) {
-            navFlag.value = true
-        }
-
     }
 
-    DisposableEffect(UInt) {
-        onDispose {
-            navFlag.value = false
-        }
-    }
 
     Column(
         modifier = modifier

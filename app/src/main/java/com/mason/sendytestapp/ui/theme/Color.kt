@@ -1,4 +1,4 @@
-package com.plcoding.sendytestapp.ui.theme
+package com.mason.sendytestapp.ui.theme
 
 import androidx.compose.ui.graphics.Color
 

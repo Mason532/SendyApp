@@ -2,31 +2,31 @@ package com.mason.sendytestapp
 
 import android.content.Context
 import android.content.Intent
-import android.util.Log
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.core.content.FileProvider
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelChildren
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import land.sendy.pfe_sdk.api.API
 import java.io.File
 
-data class LoginScreenState(
+data class OtpSendStatus(
     var sendingError: Throwable? = null,
     var isSendSucceed: Boolean = false,
 )
 
-data class OtpScreenState(
+data class OtpConfirmStatus(
     var otpConfirmError: Throwable? = null,
-    var isOtpConfirmed: Boolean = false
-)
+    var otpConfirmResult: Pair<Boolean, Int> = Pair(false, TRY_OTP_CONFIRM_COUNT)
+) {
+    companion object {
+        const val TRY_OTP_CONFIRM_COUNT = 3
+    }
+}
 
 class MainViewModel: ViewModel() {
     companion object{
@@ -46,72 +46,82 @@ class MainViewModel: ViewModel() {
         SendyTestAppCheckOtpCallback()
     }
 
-    var loginScreenState = mutableStateOf(
-        LoginScreenState()
-    )
-        private set
-
-    var otpScreenState = mutableStateOf(
-        OtpScreenState()
-    )
-        private set
+    private val _phoneScreenOtpSendStatusFlow = MutableSharedFlow<OtpSendStatus>(replay = 1)
+    val loginScreenFlow = _phoneScreenOtpSendStatusFlow.asSharedFlow()
 
     fun sendCode(api: API, phoneNumber: String, context: Context) {
-        loginScreenState.value = loginScreenState.value.copy(isSendSucceed = false)
+        setUpSendOtpCallbackCollector(_phoneScreenOtpSendStatusFlow)
+        api.loginAtAuth(context, phoneNumber, sendyOtpSendCallback)
+    }
 
-        val mutex = Mutex()
+    private val _otpResendStatusFlow = MutableSharedFlow<OtpSendStatus>(replay = 1)
+    val otpResendStatusFlow = _otpResendStatusFlow.asSharedFlow()
+
+    fun resetOtp(api: API, phoneNumber: String, context: Context) {
+        viewModelScope.launch {
+            _otpConfirmStatusFlow.emit(OtpConfirmStatus())
+            setUpSendOtpCallbackCollector(_otpResendStatusFlow)
+            api.loginAtAuth(context, phoneNumber, sendyOtpSendCallback)
+        }
+    }
+
+    private val _otpConfirmStatusFlow = MutableSharedFlow<OtpConfirmStatus>(replay = 1)
+    val otpConfirmStatusFlow = _otpConfirmStatusFlow.asSharedFlow()
+
+    fun checkOtp(context: Context, api: API, otp: String) {
         val job = Job()
         viewModelScope.launch(Dispatchers.IO + job) {
+            val previousState = _otpConfirmStatusFlow.replayCache.firstOrNull()
             launch {
-                sendyOtpSendCallback.isSendSucceed.collect {
-                    if (it) {
-                        mutex.withLock {
-                            loginScreenState.value = loginScreenState.value.copy(isSendSucceed = it, sendingError = null)
-                            job.cancelChildren()
-                        }
-                    }
+                sendyOtpCheckCallback.confirmResult.collect { result->
+                    val newState = previousState?.copy(
+                        otpConfirmResult = result,
+                        otpConfirmError = null
+                    ) ?: OtpConfirmStatus(otpConfirmResult = result)
+
+                    _otpConfirmStatusFlow.emit(newState)
+
+                    job.cancelChildren()
+                }
+            }
+
+            launch {
+                sendyOtpCheckCallback.confirmError.collect {
+                    val newState = previousState?.copy(otpConfirmError = it) ?: OtpConfirmStatus(otpConfirmError = it)
+
+                    _otpConfirmStatusFlow.emit(newState)
+
+                    job.cancelChildren()
+                }
+            }
+        }
+        api.activateWllet(context, otp, TOKEN_TYPE, sendyOtpCheckCallback)
+    }
+
+    private fun setUpSendOtpCallbackCollector(flowForCollect: MutableSharedFlow<OtpSendStatus>) {
+        val job = Job()
+
+        viewModelScope.launch(Dispatchers.IO + job) {
+            val previousState = flowForCollect.replayCache.firstOrNull()
+
+            launch {
+                sendyOtpSendCallback.sendResult.collect {
+                    val newState = previousState?.copy(isSendSucceed = it, sendingError = null)
+                        ?: OtpSendStatus(isSendSucceed = it, sendingError = null)
+                    flowForCollect.emit(newState)
+                    job.cancelChildren()
                 }
             }
 
             launch {
                 sendyOtpSendCallback.sendError.collect {
-                    mutex.withLock {
-                        loginScreenState.value = loginScreenState.value.copy(sendingError = it)
-                        job.cancelChildren()
-                    }
+                    val newState = previousState?.copy(sendingError = it)
+                        ?: OtpSendStatus(sendingError = it)
+                    flowForCollect.emit(newState)
+                    job.cancelChildren()
                 }
             }
         }
-
-        api.loginAtAuth(context, phoneNumber, sendyOtpSendCallback)
-    }
-
-    fun checkOtp(context: Context, api: API, otp: String) {
-        val mutex = Mutex()
-        val job = Job()
-        viewModelScope.launch(Dispatchers.IO + job) {
-            launch {
-                sendyOtpCheckCallback.isCheckSucceed.collect {
-                    if (it) {
-                        mutex.withLock {
-                            otpScreenState.value = otpScreenState.value.copy(isOtpConfirmed = it, otpConfirmError = null)
-                            job.cancelChildren()
-                        }
-                    }
-                }
-            }
-
-            launch {
-                sendyOtpCheckCallback.checkError.collect {
-                    mutex.withLock {
-                        otpScreenState.value = otpScreenState.value.copy(otpConfirmError = it)
-                        job.cancelChildren()
-                    }
-                }
-            }
-        }
-
-        api.activateWllet(context, otp, TOKEN_TYPE, sendyOtpCheckCallback)
     }
 
     fun getTermOfUse(context: Context, api: API) {
