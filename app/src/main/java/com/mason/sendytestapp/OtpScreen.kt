@@ -22,6 +22,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -49,8 +50,10 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalComposeUiApi::class)
 @Composable
@@ -83,13 +86,26 @@ fun Otp(
     var countdown by rememberSaveable {  mutableIntStateOf(60) }
     var isCodeSending by rememberSaveable { mutableStateOf(false) }
 
+    var isCodeConfirmedSuccessfuly by rememberSaveable { mutableStateOf(false) }
+    DisposableEffect(Unit) {
+        onDispose {
+            val currentState = lifecycleOwner.lifecycle.currentState
+            if (currentState != Lifecycle.State.DESTROYED) {
+                if (isCodeConfirmedSuccessfuly) {
+                    isCodeConfirmedSuccessfuly = false
+                    isLoading = false
+                }
+            }
+        }
+    }
+
     LaunchedEffect(isCodeSending) {
         if (isCodeSending) {
             lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
                 otpResendStatus.collect {
                     when {
                         it.isSendSucceed -> {
-                            isCodeSending = false
+                            //isCodeSending = false
                             Toast.makeText(
                                 context,
                                 "Код упешно отправлен!",
@@ -131,17 +147,33 @@ fun Otp(
                     val restOtpConfirmTry = it.otpConfirmResult.second
                     when {
                         isOtpConfirmed -> {
-                            onSucceedOtp()
+                            withContext(Dispatchers.Main.immediate) {
+                                isCodeConfirmedSuccessfuly = true
+                                onSucceedOtp()
+                            }
                         }
+
                         isOtpConfirmed == false -> {
                             if (restOtpConfirmTry > 0)
-                                Toast.makeText(context, "Неверный код активации, у вас осталось $restOtpConfirmTry попыток", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context,
+                                    "Неверный код активации, у вас осталось $restOtpConfirmTry попыток",
+                                    Toast.LENGTH_SHORT
+                                ).show()
                             else
-                                Toast.makeText(context, "Запросите новый код активации", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(
+                                    context,
+                                    "Запросите новый код активации",
+                                    Toast.LENGTH_SHORT
+                                ).show()
 
                         }
+
                         it.otpConfirmError != null -> {
-                            Toast.makeText(context, "Произошла ошибка, попробуйте ещё раз 😞", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(
+                                context,
+                                "Произошла ошибка, попробуйте ещё раз 😞",
+                                Toast.LENGTH_SHORT
+                            ).show()
                         }
                     }
                     isLoading = false

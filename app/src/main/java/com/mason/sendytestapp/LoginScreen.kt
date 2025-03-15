@@ -22,6 +22,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -48,7 +49,9 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.withContext
 
 object PhoneNumberConst {
     const val RU_PHONE_CODE = "+7"
@@ -80,6 +83,7 @@ fun LoginScreen(
 
     var isValid by rememberSaveable { mutableStateOf(false) }
     var isLoading by rememberSaveable { mutableStateOf(false) }
+    var isNavigationCompleted by remember { mutableStateOf(false) }
     var isAgreementChecked by rememberSaveable { mutableStateOf(false) }
 
     val phoneNumberRegex = "^\\+7\\d{10}$".toRegex()
@@ -87,12 +91,29 @@ fun LoginScreen(
         return phoneNumberRegex.matches(phone)
     }
 
+    DisposableEffect(Unit) {
+        onDispose {
+            val currentState = lifecycleOwner.lifecycle.currentState
+            if (currentState != Lifecycle.State.DESTROYED) {
+                if (isNavigationCompleted) {
+                    isNavigationCompleted = false
+                    isLoading = false
+                }
+            }
+        }
+    }
+
     LaunchedEffect(Unit) {
         lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
             otpSendStatus.collect{
                 if (isLoading) {
                     when {
-                        it.isSendSucceed -> onCodeSent(phoneNumber.value)
+                        it.isSendSucceed -> {
+                            withContext(Dispatchers.Main.immediate) {
+                                isNavigationCompleted = true
+                                onCodeSent(phoneNumber.value)
+                            }
+                        }
 
                         it.sendingError != null -> {
                             Toast.makeText(
@@ -100,14 +121,13 @@ fun LoginScreen(
                                 "Произошла ошибка.😞 Попробуйте ещё раз!",
                                 Toast.LENGTH_SHORT
                             ).show()
+                            isLoading = false
                         }
                     }
-                    isLoading = false
                 }
             }
         }
     }
-
 
     Column(
         modifier = modifier
